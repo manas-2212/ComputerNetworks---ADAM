@@ -12,5 +12,6 @@ Private records:
 
 Clients configured to use this DNS server:
 
-- Anant
-- Darain
+- Anant (Mac 2 / Edge)
+- Akhil (Mac 3 / Backend A)
+- Darain (Mac 4 / Backend B)
