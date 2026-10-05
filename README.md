@@ -3,8 +3,11 @@
 # Team Adam — Private LAN Networking & Service Infrastructure
 
 Manas Selukar - 2401010259
+
 Anant Singh - 2401010067
+
 Syed Darain Qamar - 2401010472
+
 Akhil Sharma - 2401020084
 
 A four-node private network implementing centralized DNS, HTTPS ingress, reverse proxying, round-robin load balancing, backend services, caching, and network-level verification.
