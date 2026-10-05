@@ -5,7 +5,7 @@ Backend A is one of the two application servers behind the NGINX edge. NGINX loa
 | Item       | Value                     |
 | ---------- | ------------------------- |
 | Owner      | Akhil                     |
-| Host IP    | `10.7.4.37`               |
+| Host IP    | `10.7.24.127`             |
 | Port       | `3001`                    |
 | Bind addr  | `0.0.0.0` (all interfaces) |
 | Runtime    | Node.js + Express 5       |
@@ -17,7 +17,7 @@ Backend A is one of the two application servers behind the NGINX edge. NGINX loa
 CLIENT ──DNS──▶ Manas (10.7.17.68)  app.team1.test → 10.7.21.52
    │
    └──HTTPS :443──▶ NGINX edge, Anant (10.7.21.52)
-                        ├──HTTP──▶ Backend A, Akhil  (10.7.4.37:3001)    ← this service
+                        ├──HTTP──▶ Backend A, Akhil  (10.7.24.127:3001)  ← this service
                         └──HTTP──▶ Backend B, Darain (10.7.13.20:3002)
 ```
 
@@ -76,7 +76,7 @@ The script:
 1. checks that Node.js and npm are installed
 2. runs `npm install` if `node_modules` is missing
 3. stops with an error if port 3001 is already in use
-4. prints this machine's LAN IP so you can check it matches `10.7.4.37`
+4. prints this machine's LAN IP so you can check it matches `10.7.24.127`
 5. starts `server.js`
 
 If you get a permission error, make the script executable first:
@@ -115,7 +115,7 @@ curl -i http://localhost:3001/api/status
 This checks that the port is reachable, which NGINX needs:
 
 ```bash
-curl -i http://10.7.4.37:3001/api/status
+curl -i http://10.7.24.127:3001/api/status
 ```
 
 ### Through the full stack (DNS → NGINX → backend)
@@ -132,5 +132,5 @@ Run this a few times. The `X-Backend` header and the `"backend"` field should sw
 | ------- | ------------------ |
 | `EADDRINUSE: address already in use :::3001` | Another process is using port 3001. Find it with `lsof -i :3001`, then stop it. |
 | Works on `localhost` but not from other machines | The macOS firewall is blocking Node. Allow incoming connections for `node` in System Settings → Network → Firewall. Also check the machine is on the same LAN. |
-| NGINX returns `502 Bad Gateway` for A | Backend A is not running, or the IP changed. Check with `ipconfig getifaddr en0` and update the NGINX upstream if it is no longer `10.7.4.37`. |
+| NGINX returns `502 Bad Gateway` for A | Backend A is not running, or the IP changed. Check with `ipconfig getifaddr en0` and update the NGINX upstream if it is no longer `10.7.24.127`. |
 | `Cannot find module 'express'` | Dependencies are not installed. Run `npm install` in this folder. |

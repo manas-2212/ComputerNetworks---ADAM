@@ -136,7 +136,7 @@ The final topology diagram is stored in \texttt{docs/topology.png}.
 \midrule
 Mac 1 -- Manas & Private DNS + Test Client & 10.7.17.68 & dnsmasq :53 \\
 Mac 2 -- Anant & Edge / Reverse Proxy / Load Balancer & 10.7.21.52 & nginx :80 / :443 \\
-Mac 3 -- Akhil & Backend A & 10.7.4.37 & REST API :3001 \\
+Mac 3 -- Akhil & Backend A & 10.7.24.127 & REST API :3001 \\
 Mac 4 -- Darain & Backend B + Test Client & 10.7.13.20 & REST API :3002 \\
 \bottomrule
 \end{tabular}
@@ -192,7 +192,7 @@ The currently recorded addresses are:
 \begin{itemize}
     \item Manas: \texttt{10.7.17.68/19}, gateway \texttt{10.7.0.1}, interface \texttt{en0}.
     \item Anant: \texttt{10.7.21.52/19}, gateway \texttt{10.7.0.1}.
-    \item Akhil: \texttt{10.7.4.37}.
+    \item Akhil: \texttt{10.7.24.127}.
     \item Darain: \texttt{10.7.13.20}.
 \end{itemize}
 
@@ -264,7 +264,7 @@ Mac 3 and Mac 4 provide simple HTTP REST services.
 \toprule
 \textbf{Backend} & \textbf{Host} & \textbf{Port} & \textbf{Identifier} \\
 \midrule
-A & 10.7.4.37 & 3001 & \texttt{X-Backend: A} \\
+A & 10.7.24.127 & 3001 & \texttt{X-Backend: A} \\
 B & 10.7.13.20 & 3002 & \texttt{X-Backend: B} \\
 \bottomrule
 \end{tabular}
@@ -287,7 +287,7 @@ Mac 2 runs nginx as the single public entry point. The upstream contains:
 
 \begin{lstlisting}
 upstream backend_servers {
-    server 10.7.4.37:3001;
+    server 10.7.24.127:3001;
     server 10.7.13.20:3002;
 }
 \end{lstlisting}

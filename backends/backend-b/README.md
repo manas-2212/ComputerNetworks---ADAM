@@ -17,7 +17,7 @@ Backend B is one of the two application servers behind the NGINX edge. NGINX loa
 CLIENT ──DNS──▶ Manas (10.7.17.68)  app.team1.test → 10.7.21.52
    │
    └──HTTPS :443──▶ NGINX edge, Anant (10.7.21.52)
-                        ├──HTTP──▶ Backend A, Akhil  (10.7.4.37:3001)
+                        ├──HTTP──▶ Backend A, Akhil  (10.7.24.127:3001)
                         └──HTTP──▶ Backend B, Darain (10.7.13.20:3002)   ← this service
 ```
 

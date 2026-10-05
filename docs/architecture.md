@@ -29,7 +29,7 @@ The architecture follows a single-entry-point design:
 |---|---|---|---|
 | Mac 1 — Manas | Private DNS + Test Client | `10.7.17.68` | dnsmasq :53 |
 | Mac 2 — Anant | Edge / Reverse Proxy / Load Balancer | `10.7.21.52` | nginx :80 / :443 |
-| Mac 3 — Akhil | Backend A | `10.7.4.37` | REST API :3001 |
+| Mac 3 — Akhil | Backend A | `10.7.24.127` | REST API :3001 |
 | Mac 4 — Darain | Backend B + Test Client | `10.7.13.20` | REST API :3002 |
 
 ### Private DNS Records

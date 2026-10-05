@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# start-backend-a.sh — start Backend A (Akhil, 10.7.4.37:3001)
+# start-backend-a.sh — start Backend A (Akhil, 10.7.24.127:3001)
 #
 # Usage (from anywhere in the repo):
 #   ./scripts/start-backend-a.sh
@@ -40,7 +40,7 @@ fi
 LAN_IP="$(ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || true)"
 echo "Starting Backend A on 0.0.0.0:$PORT"
 if [ -n "${LAN_IP:-}" ]; then
-  echo "Reachable on the LAN at http://$LAN_IP:$PORT (expected: 10.7.4.37)"
+  echo "Reachable on the LAN at http://$LAN_IP:$PORT (expected: 10.7.24.127)"
 fi
 
 # 5. Start the server (Ctrl+C to stop)
