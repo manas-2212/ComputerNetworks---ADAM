@@ -1,0 +1,514 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{enumitem}
+\usepackage{float}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+
+\definecolor{codebg}{RGB}{247,247,247}
+\definecolor{linkblue}{RGB}{35,90,150}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=linkblue,
+    urlcolor=linkblue,
+    citecolor=linkblue,
+    pdftitle={Team 1 - Private Network Service Platform - Phase 1},
+    pdfauthor={Team 1}
+}
+
+\lstset{
+    backgroundcolor=\color{codebg},
+    basicstyle=\ttfamily\small,
+    frame=single,
+    breaklines=true,
+    columns=fullflexible,
+    showstringspaces=false
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{Team 1}
+\rhead{Computer Networks -- Phase 1}
+\cfoot{\thepage}
+
+\titleformat{\section}{\Large\bfseries}{\thesection}{0.7em}{}
+\titleformat{\subsection}{\large\bfseries}{\thesubsection}{0.7em}{}
+
+\title{
+    \vspace{2cm}
+    {\LARGE\bfseries Computer Networks}\\[0.4cm]
+    {\Large Private Network Service Platform}\\[0.7cm]
+    {\large Phase 1 -- Build and Observe}\\[1.5cm]
+    \rule{\textwidth}{0.5pt}\\[0.4cm]
+    \large Team 1
+    \rule{\textwidth}{0.5pt}
+}
+\author{
+    \begin{tabular}{ll}
+    \textbf{Manas Selukar} & 2401010259 \\
+    \textbf{Anant Singh} & 2401010067 \\
+    \textbf{Syed Darain Qamar} & 2401010472 \\
+    \textbf{Akhil Sharma} & 2401020084
+    \end{tabular}
+    \\[0.6cm]
+    \textit{Team Roles:}\\
+    Manas -- Private DNS \quad
+    Anant -- Edge / nginx \quad
+    Akhil -- Backend A \quad
+    Syed Darain -- Backend B
+}
+\date{Phase 1 Submission}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+
+\begin{abstract}
+This report documents the Phase 1 implementation of a four-node private
+network service platform. The system uses a macOS LAN, centralized private
+DNS with dnsmasq, an nginx edge node providing HTTPS termination and
+round-robin load balancing, and two simple REST backends. The implementation
+is verified using \texttt{dig}, \texttt{curl}, and Wireshark captures covering
+DNS, TCP, TLS, and encrypted application traffic. Controlled failure
+scenarios are also documented to demonstrate layer-by-layer diagnosis.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Project Overview}
+
+The project implements a fully local service environment on four macOS
+laptops connected to the same private Wi-Fi/LAN. The objective is to show
+how a client request travels through DNS resolution, TCP connection
+establishment, TLS negotiation, HTTP processing, reverse proxying, and
+backend selection.
+
+The architecture deliberately keeps the application layer simple. The
+network infrastructure is the primary focus.
+
+\section{Architecture}
+
+\subsection{Topology}
+
+The four machines have the following roles:
+
+\begin{itemize}[leftmargin=*]
+    \item Mac 1 provides private DNS using dnsmasq and also acts as a test client.
+    \item Mac 2 provides the nginx edge, reverse proxy, HTTPS termination, and load balancing.
+    \item Mac 3 provides Backend A on TCP port 3001.
+    \item Mac 4 provides Backend B on TCP port 3002.
+\end{itemize}
+
+The final topology diagram is stored in \texttt{docs/topology.png}.
+
+\begin{figure}[H]
+    \centering
+    \IfFileExists{topology.png}{
+        \includegraphics[width=0.95\textwidth]{topology.png}
+    }{
+        \fbox{\parbox{0.9\textwidth}{\centering
+        Topology diagram: place \texttt{topology.png} in the same directory as this report before compiling.}}
+    }
+    \caption{Team 1 private LAN topology.}
+\end{figure}
+
+\subsection{Machine and Service Inventory}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{p{2.2cm}p{3.2cm}p{2.7cm}p{3.2cm}}
+\toprule
+\textbf{Machine} & \textbf{Role} & \textbf{Private IP} & \textbf{Services} \\
+\midrule
+Mac 1 -- Manas & Private DNS + Test Client & 10.7.17.68 & dnsmasq :53 \\
+Mac 2 -- Anant & Edge / Reverse Proxy / Load Balancer & 10.7.21.52 & nginx :80 / :443 \\
+Mac 3 -- Akhil & Backend A & 10.7.4.37 & REST API :3001 \\
+Mac 4 -- Darain & Backend B + Test Client & 10.7.13.20 & REST API :3002 \\
+\bottomrule
+\end{tabular}
+\caption{Machine and service inventory.}
+\end{table}
+
+\noindent
+The complete subnet, gateway, interface, and MAC-address inventory should
+be maintained alongside this report once all team members have supplied
+their final network details.
+
+\subsection{Request Flow}
+
+The request path is:
+
+\begin{lstlisting}
+Client
+  |
+  | DNS query: app.team1.test (UDP/53)
+  v
+Mac 1 -- dnsmasq (10.7.17.68)
+  |
+  | DNS response: 10.7.21.52
+  v
+Mac 2 -- nginx Edge (10.7.21.52:443)
+  |
+  | TLS + HTTP
+  v
++----------------------+
+| nginx load balancer  |
++----------+-----------+
+           |
+       +---+---+
+       |       |
+       v       v
+ Backend A  Backend B
+ :3001      :3002
+\end{lstlisting}
+
+The client therefore uses the private service name and the edge node as
+the public entry point. Backend IP addresses are not part of the client
+URL.
+
+\section{Private LAN}
+
+All participating machines are intended to operate on the same private
+Wi-Fi/LAN. The project requires each machine's private IPv4 address,
+subnet/prefix, default gateway, active interface, and MAC address to be
+recorded, together with pairwise reachability tests.
+
+The currently recorded addresses are:
+
+\begin{itemize}
+    \item Manas: \texttt{10.7.17.68/19}, gateway \texttt{10.7.0.1}, interface \texttt{en0}.
+    \item Anant: \texttt{10.7.21.52/19}, gateway \texttt{10.7.0.1}.
+    \item Akhil: \texttt{10.7.4.37}.
+    \item Darain: \texttt{10.7.13.20}.
+\end{itemize}
+
+The final submission should include the completed four-machine inventory
+and pairwise ping evidence in \texttt{evidence/network/}.
+
+\section{Private DNS}
+
+\subsection{dnsmasq Configuration}
+
+Mac 1 runs dnsmasq as the team's private DNS resolver. The repository copy
+is stored at:
+
+\begin{lstlisting}
+config/dnsmasq/dnsmasq.conf
+\end{lstlisting}
+
+The private records are:
+
+\begin{table}[H]
+\centering
+\begin{tabular}{ll}
+\toprule
+\textbf{Hostname} & \textbf{Address} \\
+\midrule
+\texttt{app.team1.test} & 10.7.21.52 \\
+\texttt{api.team1.test} & 10.7.21.52 \\
+\bottomrule
+\end{tabular}
+\caption{Private DNS records.}
+\end{table}
+
+dnsmasq listens on localhost and Mac 1's LAN address:
+
+\begin{lstlisting}
+listen-address=127.0.0.1,10.7.17.68
+bind-interfaces
+\end{lstlisting}
+
+Public DNS queries are forwarded to configured upstream resolvers.
+
+\subsection{Client Resolver Configuration}
+
+At least two other Macs are configured to use Mac 1
+(\texttt{10.7.17.68}) as their DNS resolver. DNS resolution was verified
+using \texttt{dig}.
+
+Example:
+
+\begin{lstlisting}
+dig app.team1.test
+\end{lstlisting}
+
+The expected private answer is:
+
+\begin{lstlisting}
+10.7.21.52
+\end{lstlisting}
+
+DNS evidence is stored in \texttt{evidence/dns/}.
+
+\section{Backend Services}
+
+Mac 3 and Mac 4 provide simple HTTP REST services.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{llll}
+\toprule
+\textbf{Backend} & \textbf{Host} & \textbf{Port} & \textbf{Identifier} \\
+\midrule
+A & 10.7.4.37 & 3001 & \texttt{X-Backend: A} \\
+B & 10.7.13.20 & 3002 & \texttt{X-Backend: B} \\
+\bottomrule
+\end{tabular}
+\caption{Backend services.}
+\end{table}
+
+Both services expose:
+
+\begin{itemize}
+    \item \texttt{GET /} -- confirms that the backend is running.
+    \item \texttt{GET /api/status} -- returns JSON containing a backend identifier and status.
+\end{itemize}
+
+The backends are required to listen on a LAN-accessible interface rather
+than only \texttt{127.0.0.1}.
+
+\section{nginx Edge and Load Balancing}
+
+Mac 2 runs nginx as the single public entry point. The upstream contains:
+
+\begin{lstlisting}
+upstream backend_servers {
+    server 10.7.4.37:3001;
+    server 10.7.13.20:3002;
+}
+\end{lstlisting}
+
+The application and API hostnames are served over HTTPS. nginx terminates
+TLS and proxies the request to the upstream backend pool.
+
+Repeated requests were used to demonstrate responses from both backend
+instances, with the \texttt{X-Backend} response header identifying the
+selected backend.
+
+\section{HTTPS and TLS}
+
+The edge service terminates HTTPS on TCP port 443. A certificate covering
+the private hostnames is installed and trusted on the client used for
+verification.
+
+The final verification uses normal certificate validation rather than
+bypassing validation with \texttt{curl -k}.
+
+The observed TLS connection included TLS 1.3 and successful certificate
+verification.
+
+The expected handshake sequence is:
+
+\begin{lstlisting}
+ClientHello
+ServerHello
+Certificate
+Key Exchange
+Finished
+\end{lstlisting}
+
+Wireshark evidence for the TLS handshake and encrypted application data
+is stored in \texttt{evidence/wireshark/}.
+
+\section{HTTP Caching}
+
+The application response includes HTTP caching headers. An observed
+response contains:
+
+\begin{lstlisting}
+Cache-Control: max-age=60
+ETag: W/"..."
+\end{lstlisting}
+
+The header evidence is stored in \texttt{evidence/https/}.
+
+\textbf{Submission note:} the Phase 1 specification requires a repeated
+request showing either cache reuse or a conditional request returning
+\texttt{304 Not Modified}. This demonstration should be completed and
+added to the evidence before the Phase 1 review.
+
+\section{Protocol Analysis}
+
+\subsection{DNS}
+
+The client first sends a DNS query for \texttt{app.team1.test}. The
+team DNS server responds with the private edge address
+\texttt{10.7.21.52}.
+
+\subsection{TCP}
+
+After DNS resolution, the client establishes a TCP connection to
+\texttt{10.7.21.52:443}. The three-way handshake is:
+
+\begin{lstlisting}
+SYN
+SYN-ACK
+ACK
+\end{lstlisting}
+
+The client uses an ephemeral source port and the server uses the
+well-known HTTPS destination port 443.
+
+\subsection{TLS}
+
+TLS is negotiated over the established TCP connection. The certificate
+is validated by the client and subsequent application data is encrypted.
+
+\subsection{HTTP}
+
+The HTTP request is transmitted inside the established TLS connection.
+nginx receives the request and selects one backend from the upstream pool.
+
+\subsection{Protocol and Port Summary}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{llll}
+\toprule
+\textbf{Function} & \textbf{Protocol} & \textbf{Transport} & \textbf{Port} \\
+\midrule
+Private DNS & DNS & UDP & 53 \\
+HTTP redirect & HTTP & TCP & 80 \\
+Secure entry & HTTPS & TCP & 443 \\
+Backend A & HTTP & TCP & 3001 \\
+Backend B & HTTP & TCP & 3002 \\
+\bottomrule
+\end{tabular}
+\caption{Service ports used by the system.}
+\end{table}
+
+\section{Wireshark Evidence}
+
+The Phase 1 packet-analysis requirement is addressed using saved
+Wireshark captures.
+
+\begin{itemize}
+    \item DNS query and response for \texttt{app.team1.test}.
+    \item TCP SYN, SYN-ACK, and ACK sequence.
+    \item TLS handshake packets.
+    \item Encrypted TLS application data.
+\end{itemize}
+
+The corresponding evidence is stored under:
+
+\begin{lstlisting}
+evidence/wireshark/
+\end{lstlisting}
+
+The captures demonstrate that the application request is not visible as
+plaintext HTTP payload after TLS encryption.
+
+\section{Controlled Failure Demonstrations}
+
+The Phase 1 failure requirements were tested deliberately.
+
+\subsection{Wrong DNS Server}
+
+The client was temporarily configured to use an external DNS server.
+The private hostname failed to resolve, demonstrating that IP
+connectivity and DNS resolution are separate layers.
+
+\subsection{Incorrect DNS Record}
+
+The private DNS record was temporarily changed to an incorrect
+destination IP. DNS resolution still succeeded, but the client was sent
+to the wrong destination and the application connection failed.
+
+\subsection{Backend A Unavailable}
+
+Backend A was stopped while Backend B remained available. The edge
+continued to receive traffic and responses from Backend B were observed.
+The final submission should demonstrate clean failover behavior without
+an avoidable long timeout.
+
+\subsection{Both Backends Unavailable}
+
+Both backend services were stopped while the edge remained reachable.
+The DNS and TLS layers could still be reached, while the application
+layer could not obtain a backend response.
+
+The Phase 1 specification expects a clear upstream failure such as
+\texttt{502 Bad Gateway}; the final evidence should show the resulting
+nginx behavior explicitly.
+
+\subsection{Wrong Destination Port}
+
+A connection was attempted against an incorrect HTTPS destination port.
+DNS still resolved the hostname to the edge IP, but the TCP connection
+to the incorrect service port failed.
+
+Failure evidence is stored in:
+
+\begin{lstlisting}
+evidence/failures/
+\end{lstlisting}
+
+\section{Evidence Map}
+
+The repository is organized so that evidence can be located quickly.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{p{3.2cm}p{8cm}}
+\toprule
+\textbf{Directory} & \textbf{Contents} \\
+\midrule
+\texttt{evidence/network/} & IP configuration and LAN reachability \\
+\texttt{evidence/dns/} & dnsmasq status and DNS resolution \\
+\texttt{evidence/https/} & HTTPS, certificate, headers, caching, load balancing \\
+\texttt{evidence/wireshark/} & DNS, TCP, TLS, and encrypted traffic captures \\
+\texttt{evidence/failures/} & Controlled failure demonstrations \\
+\bottomrule
+\end{tabular}
+\caption{Phase 1 evidence organization.}
+\end{table}
+
+\section{Phase 1 Status}
+
+The core Phase 1 infrastructure is operational:
+
+\begin{itemize}
+    \item Private LAN addressing and service roles established.
+    \item Centralized private DNS configured with dnsmasq.
+    \item Private application hostnames resolve to the nginx edge.
+    \item nginx provides the single HTTPS entry point.
+    \item Two backend services operate on fixed LAN ports.
+    \item Round-robin backend selection has been demonstrated.
+    \item TLS certificate validation succeeds without disabling verification.
+    \item DNS, TCP, TLS, and encrypted application traffic have been captured.
+    \item Required DNS and network failure scenarios have been tested.
+\end{itemize}
+
+Before the Phase 1 review, the remaining evidence items are to complete
+the HTTP cache-hit or \texttt{304 Not Modified} demonstration, finalize
+the four-machine network inventory and pairwise ping evidence, and ensure
+the backend-failure demonstrations produce clear, evaluator-visible
+results.
+
+\section{Conclusion}
+
+Phase 1 establishes a complete local request path from private DNS
+resolution through TCP, TLS, HTTPS, nginx load balancing, and backend
+response. The system is intentionally structured so that each protocol
+layer can be observed independently using standard networking tools.
+
+The resulting architecture provides a practical demonstration of how
+DNS service discovery, secure ingress, reverse proxying, load balancing,
+HTTP caching, and packet-level analysis work together in a private
+network environment.
+
+\end{document}
