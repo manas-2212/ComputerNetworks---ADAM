@@ -47,15 +47,21 @@ fi
 echo ""
 echo "[TEST 3: Authorized Ingress via Edge Reverse Proxy]"
 echo "Connecting to application via Edge (https://$EDGE_DOMAIN/)..."
-HTTP_STATUS=$(curl -sk -o /dev/null -w "%{http_code}" "https://$EDGE_DOMAIN/")
-BACKEND_HEADER=$(curl -sk -I "https://$EDGE_DOMAIN/" | grep -i "X-Backend" || echo "Header not found")
+CURL_ERR=$(mktemp)
+HTTP_STATUS=$(curl -sk --connect-timeout 3 --max-time 5 -o /dev/null -w "%{http_code}" "https://$EDGE_DOMAIN/" 2>"$CURL_ERR" || true)
+HTTP_STATUS=$(echo "$HTTP_STATUS" | tr -d '[:space:]')
+BACKEND_HEADER=$(curl -sk --connect-timeout 3 --max-time 5 -I "https://$EDGE_DOMAIN/" 2>/dev/null | grep -i "X-Backend" || echo "Header not found")
 
-if [ "$HTTP_STATUS" -eq 200 ]; then
+if [ "$HTTP_STATUS" = "200" ]; then
     echo "  PASS: Edge proxy successfully connects to backends! HTTP Status: $HTTP_STATUS ($BACKEND_HEADER)"
     echo "  Proof: Edge (Mac 2) is whitelisted in pf rules; direct client access is forbidden."
 else
-    echo "  FAIL: Error connecting via Edge: HTTP $HTTP_STATUS"
+    echo "  FAIL: Error connecting via Edge (HTTP Code: ${HTTP_STATUS:-000})"
+    if [ -s "$CURL_ERR" ]; then
+        echo "  Exact Error: $(cat "$CURL_ERR")"
+    fi
 fi
+rm -f "$CURL_ERR"
 
 echo ""
 echo "=================================================================="

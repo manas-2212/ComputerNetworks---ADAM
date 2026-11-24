@@ -10,22 +10,49 @@ ENV_FILE="$SCRIPT_DIR/../config/network.env"
 if [ -f "$ENV_FILE" ]; then source "$ENV_FILE"; fi
 
 TARGET_DOMAIN="${DOMAIN:-app.team1.test}"
-STANDBY_IP="${MAC3_IP:-10.7.24.127}"
+PRIMARY_EDGE="${MAC2_IP:-10.7.27.66}"
+STANDBY_EDGE="${MAC3_IP:-10.7.24.241}"
 
-echo "=========================================================="
-echo "Phase 2 Extension E: Edge Migration & DNS Cutover"
-echo "=========================================================="
+echo "=================================================================="
+echo "    PHASE 2 EXTENSION E: EDGE MIGRATION & DNS CUTOVER DEMO        "
+echo "=================================================================="
+echo "Domain:       $TARGET_DOMAIN"
+echo "Primary Edge: $PRIMARY_EDGE (Mac 2 — Anant)"
+echo "Standby Edge: $STANDBY_EDGE (Mac 3 — Akhil)"
+echo "------------------------------------------------------------------"
+
 echo ""
-echo "Current DNS target for $TARGET_DOMAIN:"
-dig +short "$TARGET_DOMAIN"
+echo "--- STEP 1: Current DNS Target ---"
+CURRENT_DNS=$(dig +short "$TARGET_DOMAIN" 2>/dev/null || echo "Not resolving")
+echo "  $TARGET_DOMAIN currently resolves to: $CURRENT_DNS"
 echo ""
 
-echo "Checking which Edge Proxy is currently answering:"
-EDGE_HEADER=$(curl -sk -I "https://$TARGET_DOMAIN/" | grep -i "X-Edge-Proxy" || echo "Standard NGINX Edge (Mac 2)")
-echo "Ingress node: $EDGE_HEADER"
+echo "--- STEP 2: Checking Edge Ingress Header ---"
+EDGE_HEADER=$(curl -sk --connect-timeout 3 --max-time 5 -I "https://$TARGET_DOMAIN/" 2>/dev/null | grep -i "X-Edge-Proxy" || echo "Header not returned (timeout/connecting)")
+echo "  Ingress Proxy: $EDGE_HEADER"
 echo ""
-echo "Steps for live migration demo:"
-echo "1. Start Standby NGINX on Mac 3 (Akhil): sudo nginx -c \$(pwd)/config/nginx/nginx-standby.conf"
-echo "2. Update primary & backup DNS to point $TARGET_DOMAIN -> $STANDBY_IP (Mac 3)"
-echo "3. Reload dnsmasq: sudo killall -HUP dnsmasq"
-echo "4. Watch client resolve and transition to Mac 3 (showing X-Edge-Proxy: nginx-standby-mac3) seamlessly!"
+
+echo "------------------------------------------------------------------"
+echo "--- STEP 3: Test Direct Connection to Standby Edge (Mac 3) ---"
+STANDBY_CHECK=$(curl -sk --connect-timeout 3 --max-time 5 -I "https://$STANDBY_EDGE/" 2>/dev/null | grep -i "X-Edge-Proxy" || echo "Standby Edge unreachable")
+echo "  Direct check to Mac 3 ($STANDBY_EDGE): $STANDBY_CHECK"
+
+if echo "$STANDBY_CHECK" | grep -q "nginx-standby-mac3"; then
+    echo "  PASS: Standby NGINX is alive and serving traffic on Mac 3!"
+else
+    echo "  ⚠️ Standby NGINX is not answering on $STANDBY_EDGE:443."
+    echo "     Make sure Akhil started it: sudo nginx -c \$(pwd)/config/nginx/nginx-standby.conf"
+fi
+
+echo ""
+echo "------------------------------------------------------------------"
+echo "--- STEP 4: Instructions for Live DNS Cutover ---"
+echo "To migrate traffic from Mac 2 (Anant) to Standby Mac 3 (Akhil):"
+echo "1. On Mac 1, have Manas open: config/dnsmasq/dnsmasq-phase2-primary.conf"
+echo "2. Change: address=/$TARGET_DOMAIN/$PRIMARY_EDGE"
+echo "       to: address=/$TARGET_DOMAIN/$STANDBY_EDGE"
+echo "3. Manas runs: sudo killall -HUP dnsmasq"
+echo "4. Flush client cache: sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder"
+echo "5. Re-run this script: $TARGET_DOMAIN will now point to $STANDBY_EDGE"
+echo "   and return header: X-Edge-Proxy: nginx-standby-mac3 !"
+echo "=================================================================="

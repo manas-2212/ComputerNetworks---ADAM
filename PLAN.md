@@ -120,8 +120,9 @@ Services **must never be started in random order**. In computer networks, downst
    In Terminal Window 1:
    ```bash
    sudo brew services stop dnsmasq 2>/dev/null || true
-   sudo dnsmasq -C $(pwd)/config/dnsmasq/dnsmasq-phase2-primary.conf --no-daemon
+   sudo dnsmasq -d -C "$(pwd)/config/dnsmasq/dnsmasq-phase2-primary.conf"
    ```
+   *(Or via Homebrew: `sudo cp config/dnsmasq/dnsmasq-phase2-primary.conf /opt/homebrew/etc/dnsmasq.conf && sudo brew services restart dnsmasq`)*  
    *Expected Output*: `started, version ... cache size 150`, listening on `127.0.0.1` and `<MAC1_IP>`.  
    *(Leave this terminal window running!)*
 
@@ -129,7 +130,7 @@ Services **must never be started in random order**. In computer networks, downst
    In Terminal Window 2:
    ```bash
    sudo brew services stop dnsmasq 2>/dev/null || true
-   sudo dnsmasq -C $(pwd)/config/dnsmasq/dnsmasq-phase2-backup.conf --no-daemon
+   sudo dnsmasq -d -C "$(pwd)/config/dnsmasq/dnsmasq-phase2-backup.conf"
    ```
    *Expected Output*: `started, version ... cache size 150`, listening on `127.0.0.1` and `<MAC4_IP>`.  
    *(Leave this terminal window running!)*
@@ -189,7 +190,7 @@ Once the system is running, execute and demonstrate the Phase 2 extensions in th
      - File name: `evidence/dns/backup-dns-failover.png`
   8. **Manas** restarts primary DNS:
      ```bash
-     sudo dnsmasq -C $(pwd)/config/dnsmasq/dnsmasq-phase2-primary.conf --no-daemon
+     sudo dnsmasq -d -C "$(pwd)/config/dnsmasq/dnsmasq-phase2-primary.conf"
      ```
 
 ---
@@ -370,7 +371,7 @@ Keep these commands handy for your specific laptop:
 
 ### 👤 Syed Darain Qamar (Mac 4)
 * **Start Backend B**: `./scripts/start-backend-b.sh`
-* **Start Backup DNS**: `sudo dnsmasq -C $(pwd)/config/dnsmasq/dnsmasq-phase2-backup.conf --no-daemon`
+* **Start Backup DNS**: `sudo dnsmasq -d -C "$(pwd)/config/dnsmasq/dnsmasq-phase2-backup.conf"`
 * **Run Pre-Flight Check**: `./scripts/verify-phase1.sh`
 * **Run All Tests**: `./scripts/test-backup-dns.sh`, `./scripts/test-service-isolation.sh`, `./scripts/test-ha-failover.sh`, `./scripts/test-ttl-caching.sh`, `./scripts/diagnose-stack.sh`
 
@@ -380,7 +381,7 @@ Keep these commands handy for your specific laptop:
 * **Watch Error Log**: `tail -f /opt/homebrew/var/log/nginx/error.log`
 
 ### 👤 Manas Selukar (Mac 1)
-* **Start Primary DNS**: `sudo dnsmasq -C $(pwd)/config/dnsmasq/dnsmasq-phase2-primary.conf --no-daemon`
+* **Start Primary DNS**: `sudo dnsmasq -d -C "$(pwd)/config/dnsmasq/dnsmasq-phase2-primary.conf"`
 * **Reload DNS Config**: `sudo killall -HUP dnsmasq`
 * **Query Local DNS**: `dig @127.0.0.1 app.team1.test`
 

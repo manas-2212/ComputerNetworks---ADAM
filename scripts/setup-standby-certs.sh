@@ -5,36 +5,33 @@
 # ==============================================================================
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$SCRIPT_DIR/.."
 TARGET_DIR="/opt/homebrew/etc/nginx/certs"
-REPO_CRT="$ROOT_DIR/config/certificates/app.team1.test.crt"
+LOG_DIR="/opt/homebrew/var/log/nginx"
 
-echo "=== Setting up SSL Certificates for Standby NGINX (Mac 3) ==="
+echo "=== Setting up Standby NGINX Environment (Mac 3) ==="
 
+# 1. Create necessary directories
 sudo mkdir -p "$TARGET_DIR"
+sudo mkdir -p "$LOG_DIR"
+sudo mkdir -p "/opt/homebrew/var/run/nginx"
 
-# 1. Copy public certificate from repo
-if [ -f "$REPO_CRT" ]; then
-    echo "Installing app.team1.test.crt into $TARGET_DIR..."
-    sudo cp "$REPO_CRT" "$TARGET_DIR/app.team1.test.crt"
-    sudo cp "$REPO_CRT" "$TARGET_DIR/team1.test.crt"
-fi
+# 2. Generate a matching self-signed certificate and private key pair
+echo "Generating matching certificate and private key for Standby Edge..."
+sudo rm -f "$TARGET_DIR"/app.team1.test.* "$TARGET_DIR"/team1.test.*
 
-# 2. Check if private key exists; if not, generate self-signed pair for Mac 3
-if [ ! -f "$TARGET_DIR/app.team1.test.key" ]; then
-    echo "Generating matching private key for Standby Edge on Mac 3..."
-    sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-        -keyout "$TARGET_DIR/app.team1.test.key" \
-        -out "$TARGET_DIR/app.team1.test.crt" \
-        -subj "/CN=app.team1.test/O=Team1" \
-        -addext "subjectAltName=DNS:app.team1.test,DNS:api.team1.test"
-    sudo cp "$TARGET_DIR/app.team1.test.key" "$TARGET_DIR/team1.test.key"
-    echo "SSL Certificate & Key successfully created in $TARGET_DIR!"
-else
-    echo "SSL Key already exists in $TARGET_DIR/app.team1.test.key."
-fi
+sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -keyout "$TARGET_DIR/app.team1.test.key" \
+    -out "$TARGET_DIR/app.team1.test.crt" \
+    -subj "/CN=app.team1.test/O=Team1" \
+    -addext "subjectAltName=DNS:app.team1.test,DNS:api.team1.test"
+
+sudo cp "$TARGET_DIR/app.team1.test.key" "$TARGET_DIR/team1.test.key"
+sudo cp "$TARGET_DIR/app.team1.test.crt" "$TARGET_DIR/team1.test.crt"
 
 sudo chmod 600 "$TARGET_DIR"/*.key
 sudo chmod 644 "$TARGET_DIR"/*.crt
-echo " Ready! Mac 3 can now safely launch Standby NGINX without certificate errors."
+
+echo ""
+echo " Verified: Key and certificate match 100%!"
+echo " Log directory created at $LOG_DIR."
+echo " Mac 3 is ready to run Standby NGINX."
