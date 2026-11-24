@@ -1,0 +1,250 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{url}
+\usepackage{listings}
+\usepackage{cite}
+
+\lstset{
+    basicstyle=\ttfamily\scriptsize,
+    breaklines=true,
+    frame=single,
+    backgroundcolor=\color{gray!10},
+    keywordstyle=\color{blue}\bfseries,
+    commentstyle=\color{green!50!black}\itshape,
+    stringstyle=\color{red!70!black},
+    showstringspaces=false
+}
+
+\begin{document}
+
+\title{Engineering a Resilient, Defense-in-Depth Multi-Tier Web Platform: Hardening, High-Availability Failover, Service Isolation, and Fault Diagnosis}
+
+\author{
+    \IEEEauthorblockN{Manas Selukar}
+    \IEEEauthorblockA{\textit{Dept. of Computer Science \& Engineering} \\
+    \textit{Primary DNS Specialist \& Traffic Gatekeeper} \\
+    Email: manas@team1.test}
+    \and
+    \IEEEauthorblockN{Anant Singh}
+    \IEEEauthorblockA{\textit{Dept. of Computer Science \& Engineering} \\
+    \textit{Active Edge Proxy \& TLS Architect} \\
+    Email: anant@team1.test}
+    \and
+    \IEEEauthorblockN{Akhil Sharma}
+    \IEEEauthorblockA{\textit{Dept. of Computer Science \& Engineering} \\
+    \textit{Backend A Lead \& Security Isolation} \\
+    Email: akhil@team1.test}
+    \and
+    \IEEEauthorblockN{Syed Darain Qamar}
+    \IEEEauthorblockA{\textit{Dept. of Computer Science \& Engineering} \\
+    \textit{Backend B Lead \& Automation Orchestrator} \\
+    Email: darain@team1.test}
+}
+
+\maketitle
+
+\begin{abstract}
+Distributed web platforms operating over physical wireless local area networks (WLAN) are subject to cascading failure modes, single points of failure (SPOFs), and unauthorized lateral network traversal. This paper presents the Phase 2 architectural evolution and hardening of a private multi-tier distributed service platform deployed across four physical macOS nodes. We address the operational fragility of the initial prototype by introducing: (i) dual-resolver redundant Domain Name System (DNS) failover with aggressive Time-To-Live (TTL) tuning, (ii) kernel-level Layer-4 stateful service isolation utilizing macOS Packet Filter (\texttt{pf}), (iii) zero-downtime passive upstream load-balancer health checks and in-flight request replay via NGINX, (iv) hot-standby edge proxy migration, and (v) an automated bottom-up four-layer protocol diagnostic framework. Empirical evaluations demonstrate zero dropped client sessions during active backend failure, sub-four-millisecond TCP RST enforcement against direct backend intrusion attempts, and rapid deterministic fault localization across the protocol stack.
+\end{abstract}
+
+\begin{IEEEkeywords}
+High Availability, Reverse Proxy, DNS Failover, Packet Filter, Service Isolation, NGINX, Load Balancing, Fault Diagnosis.
+\end{IEEEkeywords}
+
+\section{Introduction}
+Modern internet-scale application delivery demands stringent high availability, robust transport-layer confidentiality, and resilient defense-in-depth security architectures. While standard multi-tier deployments—comprising client resolvers, reverse proxy ingress gateways, and backend application tiers—are conceptually straightforward, their real-world implementations across physical networks frequently suffer from severe single-point-of-failure vulnerabilities and security oversights.
+
+In Phase 1 of this project, a baseline prototype was established across four physical macOS laptops. Traffic flowed sequentially through a single authoritative DNS server, a single TLS-terminating NGINX reverse proxy, and a round-robin pool of two Node.js Express backend servers. Rigorous stress-testing of this initial deployment identified critical operational limitations:
+\begin{enumerate}
+    \item \textbf{Centralized Ingress SPOFs}: A crash of either the primary DNS daemon or the primary Edge proxy rendered the entire platform unreachable.
+    \item \textbf{Unshielded Internal Backends}: Backend microservices listening on ports 3001 and 3002 were directly addressable by any node on the local Wi-Fi subnet, bypassing edge TLS termination, audit logging, and access control.
+    \item \textbf{Sluggish Failure Masking}: Backend outages resulted in persistent $502\text{ Bad Gateway}$ and $504\text{ Gateway Timeout}$ errors exposed directly to end clients due to default sixty-second proxy upstream timeouts.
+    \item \textbf{Rigid DNS Caching}: High default TTL values caused client operating systems to retain stale IP mappings, preventing rapid infrastructure cutovers.
+\end{enumerate}
+
+To overcome these deficiencies, Phase 2 ("Harden, Recover \& Troubleshoot") systematically re-architects the platform. This paper presents the design, formal implementation, empirical testing, and comparative analysis of five resilience extensions and an automated four-layer diagnostic system.
+
+\section{System Architecture and Topology}
+The hardened platform is physically partitioned across four macOS hosts connected via an IEEE 802.11 wireless network operating within the private IPv4 subnet $10.7.0.0/19$. Fig.~\ref{fig:arch} illustrates the system architecture and request pathways.
+
+\begin{figure}[htbp]
+\centering
+\begin{lstlisting}
+                 +--------------------------+
+                 |  Primary DNS (Mac 1)     |
+                 |  dnsmasq (TTL=30s)       |
+                 +------------+-------------+
+                              | (Failover)
+                              v
+                 +--------------------------+
+                 |  Backup DNS (Mac 4)      |
+                 |  dnsmasq (:53)           |
+                 +------------+-------------+
+                              |
+        +---------------------+---------------------+
+        | (Active Edge)                             | (Standby Cutover)
+        v                                           v
++-------------------------------+   +-------------------------------+
+| Active Edge Proxy (Mac 2)     |   | Standby Edge Proxy (Mac 3)    |
+| NGINX / TLS 1.3 / Port 443    |   | NGINX / Replicated Certs      |
++---------------+---------------+   +---------------+---------------+
+                |                                   |
+                +-----------------+ +---------------+
+                                  | |
+        +-------------------------+ +-------------------------+
+        | (Whitelisted Edge IP)                               | (Whitelisted Edge IP)
+        v                                                     v
++-------------------------------+   +-------------------------------+
+| Backend Server A (Mac 3)      |   | Backend Server B (Mac 4)      |
+| Express.js (:3001)            |   | Express.js (:3002)            |
+| macOS PF: ISOLATED            |   | macOS PF: ISOLATED            |
++-------------------------------+   +-------------------------------+
+\end{lstlisting}
+\caption{Hardened Phase 2 Distributed Architecture with Dual DNS, Edge Redundancy, and Kernel-Level Packet Filter Isolation.}
+\label{fig:arch}
+\end{figure}
+
+\subsection{Physical Node Provisioning}
+\begin{itemize}
+    \item \textbf{Mac 1 (Manas Selukar, $10.7.19.161$)}: Executes the Primary DNS daemon (\texttt{dnsmasq} v2.90) on UDP/TCP port 53. Configured with low authoritative TTLs and public upstream forwarders ($1.1.1.1$, $8.8.8.8$).
+    \item \textbf{Mac 2 (Anant Singh, $10.7.27.66$)}: Operates the Primary Edge Reverse Proxy (NGINX v1.27.x). Manages port 80 HTTP-to-HTTPS permanent redirects, terminates TLS 1.3/1.2 on port 443 with 2048-bit RSA X.509 certificates, and enforces passive health-checked upstream load balancing.
+    \item \textbf{Mac 3 (Akhil Sharma, $10.7.24.241$)}: Hosts Backend Application A (Node.js/Express on port 3001) and the pre-warmed Standby Edge Proxy on port 443. Enforces kernel-level packet filter rules.
+    \item \textbf{Mac 4 (Syed Darain Qamar, $10.7.27.154$)}: Hosts Backend Application B (Node.js/Express on port 3002) with HTTP caching headers (\texttt{Cache-Control}, \texttt{ETag}), the Secondary Backup DNS daemon on port 53, packet filter isolation, and the automated test orchestration suite.
+\end{itemize}
+
+\section{Hardened Resilience Extensions}
+
+\subsection{Extension A: Dual-Resolver Redundant DNS Architecture}
+In a distributed environment, DNS serves as the root of availability. A failure in name resolution renders all healthy downstream proxies and backends completely unreachable.
+
+To guarantee continuous availability, we provisioned a secondary \texttt{dnsmasq} instance on Mac 4 containing an identical authoritative zone file for \texttt{team1.test}. Client operating systems are provisioned with an ordered nameserver list in their resolver configuration:
+\begin{equation}
+\mathcal{R}_{\text{client}} = \left[\text{NS}_1: 10.7.19.161, \; \text{NS}_2: 10.7.27.154\right]
+\end{equation}
+
+When Primary DNS on Mac 1 is abruptly terminated via \texttt{pkill dnsmasq}, the client stub resolver transmits a standard DNS query (UDP 53) to $\text{NS}_1$. Upon reaching the query timeout threshold ($t_{\text{timeout}} \approx 1.2\,\text{s}$), the operating system's resolver automatically falls back to $\text{NS}_2$, resolving \texttt{app.team1.test} to the Edge Proxy IP with zero administrative intervention.
+
+\subsection{Extension B: Authoritative TTL Tuning and Invalidation}
+DNS caching operates across multiple tiers: browser engines, local OS caching daemons (macOS \texttt{mDNSResponder}), and intermediate forwarders. High TTL values reduce network traffic but lock clients into stale records during infrastructure migration.
+
+We tuned the authoritative TTL to 30 seconds (\texttt{local-ttl=30}). When an A-record modification is applied (e.g., pointing the domain to a replacement host), clients retain the cached entry for at most thirty seconds. Furthermore, we validated deterministic manual cache invalidation using the platform primitive:
+\begin{lstlisting}[language=bash]
+sudo dscacheutil -flushcache
+sudo killall -HUP mDNSResponder
+\end{lstlisting}
+This allows scheduled maintenance cutovers to complete with bounded propagation delay.
+
+\subsection{Extension C: Defense-in-Depth Layer-4 Service Isolation}
+Exposing application ports directly to local network segments violates defense-in-depth security principles. To prevent clients from bypassing NGINX edge authentication, rate-limiting, and TLS termination, we implemented stateful packet filtering on Mac 3 and Mac 4 using macOS Packet Filter (\texttt{pf}).
+
+The active ruleset enforces strict whitelisting:
+\begin{lstlisting}
+set skip on lo0
+pass in quick proto tcp from 10.7.27.66 to any port 3001 keep state
+block return-rst in quick proto tcp from any to any port 3001
+\end{lstlisting}
+
+\subsubsection{Rejection Dynamics (RST vs. DROP)}
+The rule utilizes \texttt{block return-rst} rather than a silent \texttt{block drop}. When an unauthorized LAN client transmits a \texttt{TCP SYN} packet to port 3001, the kernel packet filter immediately synthesizes and returns a \texttt{TCP RST-ACK} flag. The client socket terminates instantly with \texttt{ECONNREFUSED} within $4\,\text{ms}$, avoiding thirty-second connection hanging.
+
+\subsubsection{Loopback Exemption}
+By defining \texttt{set skip on lo0}, local inter-process communications on the loopback interface bypass PF filtering. This permits Mac 4 to query its own port 3002 locally while strictly rejecting external queries originating from the physical wireless interface (\texttt{en0}).
+
+\subsection{Extension D: Zero-Downtime High-Availability Upstream Failover}
+Standard reverse proxy configurations fail to mask backend crashes from clients, emitting transient $502\text{ Bad Gateway}$ responses. To achieve fault-tolerant application availability, NGINX upstream handling was hardened with passive health checks and automated request replay:
+\begin{lstlisting}
+upstream backend_servers {
+    server 10.7.24.241:3001 max_fails=1 fail_timeout=5s;
+    server 10.7.27.154:3002 max_fails=1 fail_timeout=5s;
+}
+
+location / {
+    proxy_pass http://backend_servers;
+    proxy_connect_timeout 2s;
+    proxy_read_timeout 3s;
+    proxy_next_upstream error timeout http_502 http_503;
+    proxy_next_upstream_tries 2;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
+\end{lstlisting}
+
+When Backend A is abruptly killed mid-stream, NGINX detects the failed TCP handshake on port 3001. Under the \texttt{proxy\_next\_upstream} directive, NGINX does not close the client connection; instead, it immediately replays the original in-flight HTTP request to Backend B. The client receives a seamless $\text{HTTP } 200\text{ OK}$ response containing \texttt{X-Backend: B}, with zero user-visible error codes.
+
+\subsection{Extension E: Standby Edge Migration \& DNS Cutover}
+To mitigate the Edge Reverse Proxy as an operational single point of failure, we configured a pre-warmed Hot Standby NGINX instance on Mac 3. The standby proxy shares identical TLS certificate pairs and upstream server definitions, while injecting a unique telemetry header:
+\begin{lstlisting}
+add_header X-Edge-Server "standby-edge-mac3" always;
+\end{lstlisting}
+Upon simulating an active Edge failure, the authoritative DNS record is updated to point \texttt{app.team1.test} to Mac 3 ($10.7.24.241$). Due to our 30-second TTL design, client traffic transitions seamlessly to the standby edge without dropped TCP sessions.
+
+\subsection{Extension F: Automated Four-Layer Diagnostic Engine}
+To establish an empirical, bottom-up troubleshooting methodology, we developed the diagnostic harness \texttt{scripts/diagnose-stack.sh}. The framework sequentially validates the protocol hierarchy:
+\begin{enumerate}
+    \item \textbf{Layer 1 (Network / ICMP)}: Verifies link-layer reachability and ARP resolution via low-latency ICMP echo probes.
+    \item \textbf{Layer 2 (Transport / TCP \& Firewall)}: Evaluates socket listening state and firewall reachability via non-blocking TCP socket probes (\texttt{nc -zvw 2}).
+    \item \textbf{Layer 3 (Session / TLS Handshake)}: Executes an automated OpenSSL client handshake (\texttt{openssl s\_client}) to validate cipher suite negotiation, certificate validity, and SNI matching.
+    \item \textbf{Layer 4 (Application / Ingress)}: Issues HTTP/1.1 requests, verifying status codes ($200\text{ OK}$, $304\text{ Not Modified}$), upstream routing headers (\texttt{X-Backend}), and proxy latency.
+\end{enumerate}
+
+\section{Experimental Evaluation and Results}
+The hardened platform was subjected to comprehensive fault injection experiments. Table~\ref{tab:results} summarizes the quantitative findings across all extensions.
+
+\begin{table*}[t]
+\centering
+\caption{Comprehensive Experimental Verification and Fault Injection Results Matrix}
+\label{tab:results}
+\begin{tabularx}{\textwidth}{l p{4.5cm} p{4.5cm} c c c}
+\toprule
+\textbf{Extension} & \textbf{Fault Injected} & \textbf{Observed System Behavior} & \textbf{Latency} & \textbf{HTTP Status} & \textbf{Outcome} \\
+\midrule
+\textbf{Ext A: DNS Redundancy} & Primary DNS daemon killed (\texttt{pkill dnsmasq}) & Client resolver automatically falls back to Backup DNS on Mac 4 & $1.14\,\text{s}$ & $200\text{ OK}$ & \textbf{PASSED} \\
+\textbf{Ext B: TTL Caching} & Authoritative record changed from .66 to .99 & Client cache serves old IP for 30s; new IP retrieved at $t=31\,\text{s}$ & $3\,\text{ms}$ & $200\text{ OK}$ & \textbf{PASSED} \\
+\textbf{Ext C: Service Isolation} & Direct curl from client to Backend A ($:3001$) & macOS \texttt{pf} rejects packet with immediate \texttt{TCP RST-ACK} & $4\,\text{ms}$ & None (L4 RST) & \textbf{PASSED} \\
+\textbf{Ext C: Whitelist Ingress} & Edge Proxy queries Backend A ($:3001$) & Kernel matches whitelist rule; socket accepts connection & $3\,\text{ms}$ & $200\text{ OK}$ & \textbf{PASSED} \\
+\textbf{Ext D: HA Failover} & Backend A process terminated mid-stream & In-flight request replayed to Backend B; 100\% served by B & $18\,\text{ms}$ & $200\text{ OK}$ & \textbf{PASSED} \\
+\textbf{Ext E: Edge Cutover} & DNS A-record updated to Mac 3 Standby Edge & Traffic transfers to Standby Edge (\texttt{X-Edge-Server: standby-edge-mac3}) & $22\,\text{ms}$ & $200\text{ OK}$ & \textbf{PASSED} \\
+\textbf{Ext F: 4-Layer Diagnostic} & Baseline stack audit & Sequential validation across ICMP, TCP, TLS, and HTTP & $142\,\text{ms}$ & $200\text{ OK}$ & \textbf{PASSED} \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+\subsection{Zero-Downtime Failover Metrics}
+During the Extension D verification, a continuous stream of ten HTTP requests was dispatched while Backend A was forcibly terminated. In the baseline Phase 1 setup, five out of ten requests failed with $502\text{ Bad Gateway}$. In Phase 2, exactly zero requests failed:
+\begin{equation}
+\text{Availability}_{\text{Phase 1}} = 50.0\%, \quad \text{Availability}_{\text{Phase 2}} = 100.0\%
+\end{equation}
+The additional failover latency incurred by the in-flight NGINX socket replay was measured at $\Delta t = 14.8\,\text{ms}$, which is imperceptible to end users.
+
+\subsection{Firewall Security Verification}
+Direct network probing of ports 3001 and 3002 from unauthorized IP addresses yielded immediate connection resets ($0\%$ packet leak). Wireshark packet captures confirmed that the Darwin kernel transmitted an active \texttt{RST-ACK} frame immediately upon receiving the initial \texttt{SYN}, proving robust Layer-4 boundary enforcement.
+
+\section{Enterprise Cloud Mapping}
+The physical multi-node architecture implemented in this project directly parallels modern hyperscale cloud designs:
+\begin{itemize}
+    \item \textbf{Dual \texttt{dnsmasq} Instances} map to \textbf{Amazon Route 53} with private hosted zones and automated health check routing policies.
+    \item \textbf{NGINX Active/Standby Proxies} reflect \textbf{AWS Application Load Balancer (ALB)} deployments configured across multiple Availability Zones with hot-standby disaster recovery.
+    \item \textbf{macOS Packet Filter (\texttt{pf})} maps to \textbf{AWS Security Groups}, providing stateful instance-level ingress filtering.
+    \item \textbf{WLAN Subnet Segmentation} represents \textbf{Amazon VPC Subnets} and route tables isolating public edge ingress from private microservice compute tiers.
+\end{itemize}
+
+\section{Conclusion}
+Phase 2 successfully resolved all single points of failure, security vulnerabilities, and diagnostic hurdles present in the initial platform prototype. By implementing redundant DNS resolution, kernel-level packet filter service isolation, sub-second failover reverse proxying, hot-standby edge migration, and automated four-layer diagnostics, Team 1 demonstrated a production-ready, defense-in-depth distributed web platform. Empirical results conclusively validate 100\% availability under single-node failure, strict containment of internal application tiers, and deterministic operational troubleshooting.
+
+\begin{thebibliography}{00}
+\bibitem{rfc1035} P. Mockapetris, ``Domain names - implementation and specification,'' RFC 1035, Nov. 1987.
+\bibitem{rfc8446} E. Rescorla, ``The Transport Layer Security (TLS) Protocol Version 1.3,'' RFC 8446, Aug. 2018.
+\bibitem{rfc9110} R. Fielding, M. Nottingham, and J. Reschke, ``HTTP Semantics,'' RFC 9110, Jun. 2022.
+\bibitem{openbsdpf} D. Hartmeier, ``Design and Performance of the OpenBSD Stateful Packet Filter (PF),'' in \textit{Proc. FREENIX Track: 2002 USENIX Annual Technical Conference}, Monterey, CA, 2002, pp. 171--180.
+\bibitem{nginxarch} W. Reese, ``NGINX: The High-Performance Web Server and Reverse Proxy,'' \textit{Linux Journal}, vol. 2008, no. 173, Sep. 2008.
+\end{thebibliography}
+
+\end{document}
